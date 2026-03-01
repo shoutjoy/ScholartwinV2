@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { AISettings } from '../types';
+import { AISettings, ExtractionMethod } from '../types';
 import { getStoredSettings, saveSettings } from '../services/geminiService';
 
 interface SettingsModalProps {
@@ -10,6 +10,7 @@ interface SettingsModalProps {
 const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
   const [settings, setSettings] = useState<AISettings>({
     activeProvider: 'gemini',
+    extractionMethod: 'pdfTextLayer',
     apiKey: '',
     textModel: '',
     imageModel: '',
@@ -32,6 +33,10 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
 
   const handleProviderChange = (provider: 'gemini' | 'external') => {
     setSettings(prev => ({ ...prev, activeProvider: provider }));
+  };
+
+  const handleExtractionMethodChange = (method: ExtractionMethod) => {
+    setSettings(prev => ({ ...prev, extractionMethod: method }));
   };
 
   const handleSave = () => {
@@ -59,6 +64,40 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
 
         <div className="p-6 space-y-6 overflow-y-auto max-h-[70vh]">
           
+          {/* 원문 추출 방식 */}
+          <div className="p-4 bg-slate-800 rounded-lg border border-slate-700">
+            <h3 className="text-sm font-bold text-slate-200 mb-3 uppercase tracking-wider">원문 추출 방식</h3>
+            <p className="text-xs text-slate-400 mb-3">PDF에서 원문을 얻는 방법을 선택하세요. 텍스트 레이어가 없는 스캔 PDF는 AI 이미지 분석을 사용하세요.</p>
+            <div className="flex flex-col gap-2">
+              <label className="flex items-start gap-3 p-3 rounded-lg cursor-pointer hover:bg-slate-700/50 transition-colors">
+                <input
+                  type="radio"
+                  name="extractionMethod"
+                  checked={settings.extractionMethod === 'pdfTextLayer'}
+                  onChange={() => handleExtractionMethodChange('pdfTextLayer')}
+                  className="mt-1 text-primary-500 focus:ring-primary-500"
+                />
+                <div>
+                  <span className="text-sm font-medium text-white">PDF 텍스트 레이어 (기본)</span>
+                  <p className="text-xs text-slate-400 mt-0.5">파일 내장 텍스트를 페이지별로 추출. 추출 시 페이지 표시(--- Page N ---)로 확인 가능.</p>
+                </div>
+              </label>
+              <label className="flex items-start gap-3 p-3 rounded-lg cursor-pointer hover:bg-slate-700/50 transition-colors">
+                <input
+                  type="radio"
+                  name="extractionMethod"
+                  checked={settings.extractionMethod === 'aiVision'}
+                  onChange={() => handleExtractionMethodChange('aiVision')}
+                  className="mt-1 text-primary-500 focus:ring-primary-500"
+                />
+                <div>
+                  <span className="text-sm font-medium text-white">AI 이미지 분석</span>
+                  <p className="text-xs text-slate-400 mt-0.5">페이지를 이미지로 변환 후 AI가 읽어 추출. 스캔 PDF나 텍스트 레이어가 없을 때 사용.</p>
+                </div>
+              </label>
+            </div>
+          </div>
+
           {/* Provider Toggle */}
           <div className="flex bg-slate-800 p-1 rounded-lg">
              <button 

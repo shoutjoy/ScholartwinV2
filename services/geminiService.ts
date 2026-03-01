@@ -14,6 +14,7 @@ export const getStoredSettings = (): AISettings => {
     const parsed = JSON.parse(saved);
     return {
         activeProvider: parsed.activeProvider || 'gemini',
+        extractionMethod: parsed.extractionMethod || 'pdfTextLayer',
         apiKey: parsed.apiKey || '',
         textModel: parsed.textModel || DEFAULT_TEXT_MODEL,
         imageModel: parsed.imageModel || DEFAULT_IMAGE_MODEL,
@@ -24,6 +25,7 @@ export const getStoredSettings = (): AISettings => {
   }
   return {
     activeProvider: 'gemini',
+    extractionMethod: 'pdfTextLayer',
     apiKey: '',
     textModel: DEFAULT_TEXT_MODEL,
     imageModel: DEFAULT_IMAGE_MODEL,
@@ -203,6 +205,98 @@ export const analyzePageContent = async (
             type: SegmentType.TEXT,
             original: `[Error processing Page ${pageIndex + 1}]`,
             translated: `[페이지 ${pageIndex + 1} 처리 중 오류가 발생했습니다. 재시도 해주세요.]`,
+            citations: []
+        }];
+    }
+};
+
+// 2b. Segment and translate extracted text (when using PDF text layer extraction)
+export const analyzePageContentFromText = async (
+    pageTextWithMarker: string,
+    pageIndex: number, // 1-based
+    tone: TranslationTone
+): Promise<PaperSegment[]> => {
+    const ai = getAiClient();
+    const settings = getStoredSettings();
+
+    const toneInstruction = tone === TranslationTone.ACADEMIC 
+    ? "Translate using formal academic Korean (~이다). Use specialized terminology. Headings use Noun endings (e.g., '서론')." 
+    : "Translate using easy, explanatory Korean style (~해요).";
+
+    const prompt = `
+      You are an expert academic paper parser.
+      Task: Segment and translate the following text from Page ${pageIndex}.
+      The text may include a line like "--- Page ${pageIndex} ---"; ignore that marker.
+
+      **Content Segmentation Rules** (same as image-based parsing):
+
+      1. **CODE & PROGRAM OUTPUTS** (Type: 'code'):
+         - Preserve ALL comments exactly. Treat Program Outputs, Model Fit Statistics, Loglikelihood lists as 'code'.
+
+      2. **FIGURE CAPTIONS** (Type: 'figure_caption'):
+         - Lines starting with "Figure X", "Fig. X" with full caption.
+
+      3. **TABLES** (Type: 'table'):
+         - Only explicit data grids labeled "Table X". Include table title. Convert body to Markdown.
+
+      4. **TEXT & OTHERS**:
+         - **heading**: Section titles. **abstract**: Abstract block. **text**: Body paragraphs. **equation**: Math (LaTeX). **reference**: Bibliography.
+
+      **Translation**:
+      - ${toneInstruction}
+      - Do NOT translate Code, Program Outputs, or Variable names.
+      - Translate Figure Captions and Table Titles.
+
+      Output JSON 'segments'. Each segment: id (string), type (text|heading|abstract|figure_caption|equation|table|code), original (source text), translated (Korean), citations (array of strings).
+    `;
+
+    const responseSchema: Schema = {
+        type: Type.OBJECT,
+        properties: {
+            segments: {
+                type: Type.ARRAY,
+                items: {
+                    type: Type.OBJECT,
+                    properties: {
+                        id: { type: Type.STRING },
+                        type: { type: Type.STRING },
+                        original: { type: Type.STRING },
+                        translated: { type: Type.STRING },
+                        citations: { type: Type.ARRAY, items: { type: Type.STRING } }
+                    },
+                    required: ["type", "original", "translated"]
+                }
+            }
+        }
+    };
+
+    try {
+        const response = await ai.models.generateContent({
+            model: settings.textModel,
+            contents: {
+                parts: [{ text: `Page ${pageIndex} text:\n\n${pageTextWithMarker}\n\n${prompt}` }]
+            },
+            config: { responseMimeType: "application/json", responseSchema }
+        });
+
+        let rawText = response.text || "{}";
+        rawText = rawText.replace(/```json/g, '').replace(/```/g, '');
+        const result = JSON.parse(rawText);
+
+        return (result.segments || []).map((s: any, idx: number) => ({
+            ...s,
+            id: `pg${pageIndex - 1}_${idx}_${Date.now()}`,
+            pageIndex,
+            type: validateSegmentType(s.type)
+        }));
+    } catch (e) {
+        console.error(`Error analyzing page ${pageIndex} from text:`, e);
+        return [{
+            id: `err_${pageIndex}`,
+            pageIndex,
+            type: SegmentType.TEXT,
+            original: `[Error processing Page ${pageIndex}]`,
+            translated: `[페이지 ${pageIndex} 처리 중 오류가 발생했습니다. 재시도 해주세요.]`,
             citations: []
         }];
     }

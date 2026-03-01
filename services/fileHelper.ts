@@ -67,16 +67,87 @@ export interface PageImage {
   height: number;
 }
 
+/** Result of extracting text from a single PDF page (for verification and AI). */
+export interface ExtractedPageText {
+  pageIndex: number;
+  /** Plain text for this page (no marker). */
+  text: string;
+  /** Same text with page marker for verification (e.g. "--- Page 1 ---\\n..."). */
+  textWithPageMarker: string;
+}
+
 export const getPdfPageCount = async (file: File): Promise<number> => {
     try {
         const arrayBuffer = await file.arrayBuffer();
-        const loadingTask = pdfjs.getDocument(arrayBuffer);
+        const loadingTask = pdfjs.getDocument({
+          data: arrayBuffer,
+          cMapUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/cmaps/',
+          cMapPacked: true,
+          standardFontDataUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/standard_fonts/'
+        });
         const pdf = await loadingTask.promise;
         return pdf.numPages;
     } catch (e) {
         console.error("Failed to get page count", e);
         return 0;
     }
+};
+
+/**
+ * Extract text from PDF pages using the document's text layer (getTextContent).
+ * Returns one entry per physical page with page markers for verification.
+ */
+export const extractTextFromPdfPages = async (
+  file: File,
+  maxPages: number = 9999
+): Promise<ExtractedPageText[]> => {
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const loadingTask = pdfjs.getDocument({
+      data: arrayBuffer,
+      cMapUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/cmaps/',
+      cMapPacked: true,
+      standardFontDataUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/standard_fonts/'
+    });
+    const pdf = await loadingTask.promise;
+    const numPages = Math.min(pdf.numPages, maxPages);
+    const result: ExtractedPageText[] = [];
+
+    for (let i = 1; i <= numPages; i++) {
+      const page = await pdf.getPage(i);
+      const textContent = await page.getTextContent();
+      const lines: string[] = [];
+      let lastY: number | null = null;
+      const lineGap = 5;
+
+      for (const item of textContent.items as { str?: string; transform?: number[] }[]) {
+        const str = item.str ?? '';
+        if (!str) continue;
+        const transform = item.transform;
+        const y = transform && transform[5] !== undefined ? transform[5] : 0;
+        if (lastY !== null && Math.abs(y - lastY) > lineGap) {
+          lines.push('\n');
+        }
+        lines.push(str);
+        lastY = y;
+      }
+
+      const text = lines.join('').replace(/\n+/g, '\n').trim();
+      const pageMarker = `\n--- Page ${i} ---\n`;
+      const textWithPageMarker = pageMarker + (text || '(no text on this page)') + '\n';
+
+      result.push({
+        pageIndex: i,
+        text,
+        textWithPageMarker
+      });
+    }
+
+    return result;
+  } catch (error) {
+    console.error("PDF text extraction error:", error);
+    throw new Error("Failed to extract text from PDF. The file may not have a text layer.");
+  }
 };
 
 export const renderPdfPagesToImages = async (file: File, maxPages: number = 5): Promise<PageImage[]> => {

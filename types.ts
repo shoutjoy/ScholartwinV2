@@ -98,11 +98,16 @@ export interface AuthState {
 
 export type AIProvider = 'gemini' | 'external';
 
+/** How to obtain original text from the PDF: from file text layer (default) or from AI reading page images. */
+export type ExtractionMethod = 'pdfTextLayer' | 'aiVision';
+
 export interface AISettings {
   activeProvider: AIProvider;
-  
+  /** Default: 'pdfTextLayer' — extract text via PDF text layer; 'aiVision' — use AI on page images. */
+  extractionMethod: ExtractionMethod;
+
   // Gemini Specific
-  apiKey: string; 
+  apiKey: string;
   textModel: string; // e.g., gemini-3-pro-preview
   imageModel: string; // e.g., gemini-2.5-flash-image (Nano Banana)
 
