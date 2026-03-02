@@ -224,6 +224,118 @@ export const analyzePdf = async (base64Pdf: string, tone: TranslationTone): Prom
    throw new Error("Please use page-by-page analysis (analyzePageContent) for full documents.");
 };
 
+export const structureOriginalTextIntoBlocks = async (rawText: string): Promise<string[]> => {
+  const cleaned = (rawText || "").trim();
+  if (!cleaned) return [];
+
+  const ai = getAiClient();
+  const settings = getStoredSettings();
+  const prompt = `
+    You are cleaning OCR/PDF extracted academic text.
+    The text may contain hard line breaks in the middle of sentences.
+
+    Task:
+    1) Reconnect wrapped lines into normal sentences.
+    2) Split the content into readable paragraph blocks.
+    3) Preserve original language and meaning. Do NOT translate.
+    4) Keep equations, table-like lines, and list items intact as much as possible.
+
+    Return JSON only: { "blocks": ["paragraph 1", "paragraph 2", ...] }
+
+    INPUT:
+    ${cleaned}
+  `;
+
+  const responseSchema: Schema = {
+    type: Type.OBJECT,
+    properties: {
+      blocks: {
+        type: Type.ARRAY,
+        items: { type: Type.STRING }
+      }
+    },
+    required: ["blocks"]
+  };
+
+  try {
+    const response = await ai.models.generateContent({
+      model: settings.textModel,
+      contents: { text: prompt },
+      config: {
+        responseMimeType: "application/json",
+        responseSchema
+      }
+    });
+    const text = response.text || '{"blocks":[]}';
+    const parsed = JSON.parse(text);
+    const blocks = Array.isArray(parsed.blocks) ? parsed.blocks : [];
+    return blocks.map((b: string) => (b || "").trim()).filter(Boolean);
+  } catch (error) {
+    // Fallback: simple local paragraph split when AI structuring is unavailable.
+    return cleaned
+      .split(/\n\s*\n/g)
+      .map((p) => p.replace(/\n+/g, " ").replace(/\s{2,}/g, " ").trim())
+      .filter(Boolean);
+  }
+};
+
+export const translatePlainTextToKorean = async (text: string): Promise<string> => {
+  const source = (text || "").trim();
+  if (!source) return "";
+
+  const ai = getAiClient();
+  const settings = getStoredSettings();
+
+  const prompt = `
+You are a professional academic translator.
+Translate the following English text into natural Korean.
+
+Rules:
+1) Preserve original meaning accurately.
+2) Keep equations, inline symbols, citations, and code-like tokens as-is when appropriate.
+3) Do not summarize. Do not omit content.
+4) Return only translated Korean text.
+
+Text:
+${source}
+  `;
+
+  const response = await ai.models.generateContent({
+    model: settings.textModel,
+    contents: { text: prompt }
+  });
+
+  return (response.text || "").trim();
+};
+
+const LIST_DELIMITER = '\n⫽\n'; // unlikely to appear in content
+
+/** Translate multiple texts in one call; returns array in same order. Delimiter is preserved in output. */
+export const translateLinesToKorean = async (lines: string[]): Promise<string[]> => {
+  if (!lines.length) return [];
+  const single = lines.join(LIST_DELIMITER).trim();
+  if (!single) return lines.map(() => '');
+  const prompt = `
+You are a professional academic translator.
+Translate the following English text into natural Korean.
+IMPORTANT: Keep the exact delimiter "${LIST_DELIMITER}" between each translated segment. Do not add or remove delimiters.
+Return only the translated text with the same number of segments.
+
+Text:
+${single}
+  `;
+  const ai = getAiClient();
+  const settings = getStoredSettings();
+  const response = await ai.models.generateContent({
+    model: settings.textModel,
+    contents: { text: prompt }
+  });
+  const out = (response.text || '').trim();
+  const translated = out.split(LIST_DELIMITER).map(s => s.trim());
+  while (translated.length < lines.length) translated.push('');
+  return translated.slice(0, lines.length);
+};
+
 export const explainBlockContent = async (originalText: string, translatedText: string, userPrompt?: string): Promise<{korean: string, english: string}> => {
   const ai = getAiClient();
   const settings = getStoredSettings();
@@ -354,10 +466,38 @@ export const generateConclusion = async (segments: PaperSegment[]): Promise<Conc
 export const generatePresentationScript = async (segments: PaperSegment[]): Promise<string> => {
   const ai = getAiClient();
   const settings = getStoredSettings();
-  const contextText = segments.map(s => `[${s.type}] ${s.original}`).join("\n").slice(0, 50000);
+  const buildBalancedPageContext = (items: PaperSegment[], maxTotalChars: number = 50000, maxPerPageChars: number = 3500) => {
+    const grouped = new Map<number, PaperSegment[]>();
+    for (const seg of items) {
+      const key = seg.pageIndex || 1;
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key)!.push(seg);
+    }
+
+    const pageKeys = Array.from(grouped.keys()).sort((a, b) => a - b);
+    const chunks: string[] = [];
+    let total = 0;
+
+    for (const page of pageKeys) {
+      const raw = (grouped.get(page) || [])
+        .map((s) => `[${s.type}] ${s.original}`)
+        .join('\n')
+        .slice(0, maxPerPageChars);
+
+      if (!raw.trim()) continue;
+      const withHeader = `\n--- Page ${page} ---\n${raw}\n`;
+      if (total + withHeader.length > maxTotalChars) break;
+      chunks.push(withHeader);
+      total += withHeader.length;
+    }
+    return chunks.join('\n').trim();
+  };
+
+  const contextText = buildBalancedPageContext(segments);
   
   const prompt = `
     Based on the provided academic paper content, create a presentation script for a PPT.
+    IMPORTANT: Use key points from all provided pages in order, not only the first page.
     
     Structure the output as follows for each slide:
     ---

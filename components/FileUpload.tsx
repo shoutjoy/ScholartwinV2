@@ -7,6 +7,12 @@ interface FileUploadProps {
 
 const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, isProcessing }) => {
   const [isDragging, setIsDragging] = useState(false);
+  const isAllowedFile = (file: File) => {
+    const lowerName = file.name.toLowerCase();
+    const isPdf = file.type === 'application/pdf' || lowerName.endsWith('.pdf');
+    const isStp = lowerName.endsWith('.stp');
+    return isPdf || isStp;
+  };
 
   const handleDragEnter = (e: React.DragEvent) => {
     e.preventDefault();
@@ -38,17 +44,23 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, isProcessing }) =
     const files = e.dataTransfer.files;
     if (files && files.length > 0) {
       const file = files[0];
-      if (file.type === 'application/pdf') {
+      if (isAllowedFile(file)) {
         onFileSelect(file);
       } else {
-        alert("Please upload a PDF file.");
+        alert("Please upload a PDF or STP file.");
       }
     }
   }, [onFileSelect, isProcessing]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
-      onFileSelect(e.target.files[0]);
+      const file = e.target.files[0];
+      if (!isAllowedFile(file)) {
+        alert("Please upload a PDF or STP file.");
+        e.target.value = '';
+        return;
+      }
+      onFileSelect(file);
     }
   };
 
@@ -83,10 +95,10 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, isProcessing }) =
         
         <div>
           <h3 className="text-xl font-bold text-gray-900 mb-1">
-             {isDragging ? 'Drop PDF here' : 'Upload Research Paper'}
+             {isDragging ? 'Drop PDF/STP here' : 'Upload Research Paper or STP Project'}
           </h3>
           <p className="text-gray-500 text-sm">
-            Drag & drop your PDF here, or click to browse
+            Drag & drop your PDF/STP here, or click to browse
           </p>
         </div>
 
@@ -96,13 +108,13 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, isProcessing }) =
             isProcessing ? 'bg-gray-400' : 'bg-primary-600'
           }`}
         >
-          {isProcessing ? 'Processing...' : 'Select PDF'}
+          {isProcessing ? 'Processing...' : 'Select PDF/STP'}
         </span>
       </div>
 
       <input
         type="file"
-        accept="application/pdf"
+        accept=".pdf,.stp,application/pdf"
         className="hidden"
         id="file-upload"
         onChange={handleChange}

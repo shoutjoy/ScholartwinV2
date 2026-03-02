@@ -404,7 +404,7 @@ const FigureList: React.FC<{
 };
 
 // Internal PDF Renderer component for TwinView
-const InternalPdfRenderer: React.FC<{ pdfUrl: string }> = ({ pdfUrl }) => {
+const InternalPdfRenderer: React.FC<{ pdfUrl: string; zoomPercent: number }> = ({ pdfUrl, zoomPercent }) => {
     const [pdfDoc, setPdfDoc] = useState<any>(null);
     const [numPages, setNumPages] = useState(0);
     const canvasRefs = useRef<(HTMLCanvasElement | null)[]>([]);
@@ -436,17 +436,16 @@ const InternalPdfRenderer: React.FC<{ pdfUrl: string }> = ({ pdfUrl }) => {
             for (let i = 1; i <= numPages; i++) {
                 const canvas = canvasRefs.current[i-1];
                 if (canvas) {
-                    if (canvas.getAttribute('data-rendered') === 'true') continue;
-
                     const page = await pdfDoc.getPage(i);
-                    // Use standard scale for internal view (1.2-1.5 usually good for reading)
-                    const viewport = page.getViewport({ scale: 1.2 });
+                    // Base scale * user zoom percentage
+                    const viewport = page.getViewport({ scale: 1.2 * (zoomPercent / 100) });
                     
                     const context = canvas.getContext('2d');
                     if (context) {
                         canvas.height = viewport.height;
                         canvas.width = viewport.width;
-                        canvas.style.width = "100%";
+                        // Keep actual rendered width so zoom controls visibly affect the PDF panel.
+                        canvas.style.width = `${viewport.width}px`;
                         canvas.style.height = "auto";
                         
                         await page.render({
@@ -460,12 +459,12 @@ const InternalPdfRenderer: React.FC<{ pdfUrl: string }> = ({ pdfUrl }) => {
             }
         };
         renderPages();
-    }, [pdfDoc, numPages]);
+    }, [pdfDoc, numPages, zoomPercent]);
 
     return (
-        <div className="flex flex-col items-center bg-gray-500 py-4 gap-4 min-h-full">
+        <div className="flex flex-col items-center bg-gray-500 py-4 gap-4 min-h-full overflow-auto">
             {Array.from({ length: numPages }, (_, i) => (
-                <div key={i} className="bg-white shadow-lg" style={{ width: '90%', maxWidth: '800px' }}>
+                <div key={i} className="bg-white shadow-lg" style={{ width: 'fit-content', maxWidth: 'none' }}>
                      <canvas 
                         ref={(el) => { canvasRefs.current[i] = el; }} 
                      />
@@ -476,7 +475,14 @@ const InternalPdfRenderer: React.FC<{ pdfUrl: string }> = ({ pdfUrl }) => {
     );
 };
 
-const TwinView: React.FC<TwinViewProps & { onToggleBookmark: (id: string) => void; onUpdateNote: (id: string, note: string) => void; onSyncScroll: (percentage: number) => void; onRetranslatePage?: (pageIndex: number) => void; onLoadNextBatch?: () => void; }> = ({ 
+type SourceTranslateData = {
+  pageTranslations?: Record<number, string[]> | null;
+  structuredOriginalBlocks?: Record<number, string[]> | null;
+  extractedPageTexts?: { pageIndex: number; text: string }[] | null;
+  onRequestPageTranslate?: () => void | Promise<void>;
+};
+
+const TwinView: React.FC<TwinViewProps & { onToggleBookmark: (id: string) => void; onUpdateNote: (id: string, note: string) => void; onSyncScroll: (percentage: number) => void; onRetranslatePage?: (pageIndex: number) => void; onLoadNextBatch?: () => void; } & SourceTranslateData> = ({ 
   segments, 
   highlightedId, 
   onHoverSegment,
@@ -489,12 +495,21 @@ const TwinView: React.FC<TwinViewProps & { onToggleBookmark: (id: string) => voi
   onUpdateNote,
   onSyncScroll,
   onRetranslatePage,
-  onLoadNextBatch
+  onLoadNextBatch,
+  pageTranslations = null,
+  structuredOriginalBlocks = null,
+  extractedPageTexts = null,
+  onRequestPageTranslate
 }) => {
   const leftRef = useRef<HTMLDivElement>(null);
   const rightRef = useRef<HTMLDivElement>(null);
   const isSyncing = useRef(false);
   const [viewMode, setViewMode] = useState<'text' | 'image' | 'pdf' | 'bookmarks'>('text');
+  const [leftViewMode, setLeftViewMode] = useState<'english' | 'korean' | 'twin'>('korean');
+  const [pdfZoom, setPdfZoom] = useState(100);
+  const [showSourceViewWindow, setShowSourceViewWindow] = useState(false);
+  const [isSourceViewWindowFullscreen, setIsSourceViewWindowFullscreen] = useState(false);
+  const [isTwinScrollSyncOn, setIsTwinScrollSyncOn] = useState(true);
 
   const figureSegments = segments.filter(s => s.type === SegmentType.FIGURE_CAPTION || s.type === SegmentType.TABLE || (s.type === SegmentType.TEXT && s.original.toLowerCase().startsWith('figure')));
   const bookmarkedSegments = segments.filter(s => s.isBookmarked);
@@ -513,8 +528,19 @@ const TwinView: React.FC<TwinViewProps & { onToggleBookmark: (id: string) => voi
   const sortedPageKeys = Object.keys(groupedSegments).map(Number).sort((a, b) => a - b);
   const maxPageLoaded = sortedPageKeys.length > 0 ? Math.max(...sortedPageKeys) : 0;
 
+  const openPdfInNewWindow = () => {
+    if (!pdfUrl) return;
+    const link = document.createElement('a');
+    link.href = pdfUrl;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   const handleScroll = (source: 'left' | 'right') => {
-    // Enable sync for both text and PDF mode when scrolling left
+    if (!isTwinScrollSyncOn) return;
     if (viewMode !== 'text' && viewMode !== 'pdf' && source === 'left') return;
     if (isSyncing.current) return;
     
@@ -525,17 +551,18 @@ const TwinView: React.FC<TwinViewProps & { onToggleBookmark: (id: string) => voi
     isSyncing.current = true;
 
     if (source === 'right') {
-         const percentage = right.scrollTop / (right.scrollHeight - right.clientHeight);
-         if (!isNaN(percentage)) {
-             onSyncScroll(percentage);
-         }
-         // Sync left scroll position based on right
-         left.scrollTop = percentage * (left.scrollHeight - left.clientHeight);
+         const scrollable = right.scrollHeight - right.clientHeight;
+         const percentage = scrollable > 0 ? right.scrollTop / scrollable : 0;
+         if (!isNaN(percentage)) onSyncScroll(percentage);
+         const leftScrollable = left.scrollHeight - left.clientHeight;
+         left.scrollTop = Math.max(0, percentage * leftScrollable);
     }
 
     if (source === 'left') {
-      const percentage = left.scrollTop / (left.scrollHeight - left.clientHeight);
-      right.scrollTop = percentage * (right.scrollHeight - right.clientHeight);
+      const scrollable = left.scrollHeight - left.clientHeight;
+      const percentage = scrollable > 0 ? left.scrollTop / scrollable : 0;
+      const rightScrollable = right.scrollHeight - right.clientHeight;
+      right.scrollTop = Math.max(0, percentage * rightScrollable);
     } 
 
     setTimeout(() => {
@@ -543,9 +570,74 @@ const TwinView: React.FC<TwinViewProps & { onToggleBookmark: (id: string) => voi
     }, 50);
   };
 
+  const getLeftSegmentContent = (seg: PaperSegment) => {
+    if (leftViewMode === 'english') return seg.original;
+    if (leftViewMode === 'korean') return seg.translated;
+    return `[Original]\n${seg.original}\n\n[Translation]\n${seg.translated}`;
+  };
+
+  const getLeftPreviewText = () => {
+    const hasPageOriginal = extractedPageTexts?.length && (structuredOriginalBlocks && Object.keys(structuredOriginalBlocks).length > 0);
+    const hasPageTranslation = pageTranslations != null && Object.keys(pageTranslations).length > 0;
+    const hasSegmentTranslation = segments.some((s) => (s.translated || '').trim().length > 0);
+
+    if (leftViewMode === 'english') {
+      if (hasPageOriginal && extractedPageTexts && structuredOriginalBlocks) {
+        return extractedPageTexts
+          .map((p) => {
+            const blocks = structuredOriginalBlocks![p.pageIndex];
+            const blockText = blocks?.length ? blocks.join('\n\n') : (p.text || '').trim();
+            return `--- Page ${p.pageIndex} ---\n\n${blockText}`;
+          })
+          .join('\n\n\n');
+      }
+      if (segments.length === 0) return '원문이 없습니다.';
+      return segments.map((s) => s.original).join('\n\n');
+    }
+
+    if (leftViewMode === 'korean') {
+      if (hasPageTranslation && extractedPageTexts && pageTranslations) {
+        return extractedPageTexts
+          .map((p) => {
+            const blocks = pageTranslations[p.pageIndex] || [];
+            return `--- Page ${p.pageIndex} (번역) ---\n\n${blocks.join('\n\n')}`;
+          })
+          .join('\n\n\n');
+      }
+      if (hasSegmentTranslation) return segments.map((s) => s.translated).join('\n\n');
+      return '번역이 없습니다. [원문번역] 화면에서 페이지번역을 실행하면 여기서 볼 수 있습니다.';
+    }
+
+    // 함께 보기
+    if (hasPageOriginal && hasPageTranslation && extractedPageTexts && structuredOriginalBlocks && pageTranslations) {
+      return extractedPageTexts
+        .map((p) => {
+          const origBlocks = structuredOriginalBlocks[p.pageIndex] || [];
+          const transBlocks = pageTranslations[p.pageIndex] || [];
+          const origText = origBlocks.length ? origBlocks.join('\n\n') : (p.text || '').trim();
+          const transText = transBlocks.join('\n\n');
+          return `--- Page ${p.pageIndex} ---\n\n[Original]\n${origText}\n\n[Translation]\n${transText}`;
+        })
+        .join('\n\n---\n\n');
+    }
+    if (segments.length === 0) return '번역 결과가 아직 없습니다.';
+    return segments.map((s) => `[Original]\n${s.original}\n\n[Translation]\n${s.translated}`).join('\n\n---\n\n');
+  };
+
+  const handleLeftViewMode = (mode: 'english' | 'korean' | 'twin') => {
+    if (mode === 'korean') {
+      const hasPageTranslation = pageTranslations != null && Object.keys(pageTranslations).length > 0;
+      const hasSegmentTranslation = segments.some((s) => (s.translated || '').trim().length > 0);
+      if (!hasPageTranslation && !hasSegmentTranslation && segments.length > 0 && onRequestPageTranslate && window.confirm('번역이 없습니다. 지금 [AI페이지번역]을 실행할까요?')) {
+        onRequestPageTranslate();
+      }
+    }
+    setLeftViewMode(mode);
+  };
+
   const renderSegmentList = (isKorean: boolean) => {
       return (
-          <div className="p-6 font-sans">
+          <div className={`p-6 font-sans ${!isKorean ? 'space-y-4' : ''}`}>
               {sortedPageKeys.map(pageIdx => (
                   <div key={pageIdx} id={`page-container-${pageIdx}`} className="mb-10 scroll-mt-4">
                       <div className="flex items-center gap-3 mb-4 pb-2 border-b border-gray-200">
@@ -565,6 +657,7 @@ const TwinView: React.FC<TwinViewProps & { onToggleBookmark: (id: string) => voi
                           )}
                       </div>
                       {groupedSegments[pageIdx].map(seg => (
+                        <div key={`wrap-${isKorean ? 'trans' : 'orig'}-${seg.id}`} className={!isKorean ? 'rounded-lg border border-gray-200 bg-gray-50/50 p-4 mb-4' : ''}>
                         <SegmentBlock
                             key={`${isKorean ? 'trans' : 'orig'}-${seg.id}`}
                             segment={seg}
@@ -577,6 +670,7 @@ const TwinView: React.FC<TwinViewProps & { onToggleBookmark: (id: string) => voi
                             onToggleBookmark={onToggleBookmark}
                             onUpdateNote={onUpdateNote}
                         />
+                        </div>
                       ))}
                   </div>
               ))}
@@ -588,7 +682,7 @@ const TwinView: React.FC<TwinViewProps & { onToggleBookmark: (id: string) => voi
                           onClick={onLoadNextBatch}
                           className="px-6 py-3 bg-white border border-gray-300 text-gray-700 font-bold rounded-lg hover:bg-gray-50 shadow-sm transition-all hover:scale-105 active:scale-95 flex items-center gap-2 mx-auto"
                         >
-                            <span>Load Next 2 Pages (Page {maxPageLoaded + 1}-{maxPageLoaded + 2})</span>
+                            <span>Load Next 1 Page (Page {maxPageLoaded + 1})</span>
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4">
                                 <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
                             </svg>
@@ -604,13 +698,33 @@ const TwinView: React.FC<TwinViewProps & { onToggleBookmark: (id: string) => voi
       <div className="flex-1 flex overflow-hidden relative">
         <div className="w-1/2 flex flex-col border-r border-gray-200 bg-white relative">
           <div className="h-12 flex-none px-4 flex items-center justify-between border-b border-gray-100 bg-white z-10">
-            <span className="font-sans text-xs uppercase tracking-wider text-gray-500">Original Source</span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  setViewMode('text');
+                  setIsSourceViewWindowFullscreen(false);
+                  setShowSourceViewWindow(true);
+                }}
+                className={`font-sans text-xs uppercase tracking-wider transition-colors px-2 py-1 rounded border ${
+                  viewMode === 'text'
+                    ? 'bg-white text-gray-800 shadow-sm border-gray-300'
+                    : 'text-gray-500 hover:text-gray-800 border-transparent'
+                }`}
+                title="원문 텍스트 보기"
+              >
+                원문 text
+              </button>
+            </div>
             <div className="flex items-center gap-2">
                <div className="flex bg-gray-100 rounded p-0.5">
                 <button onClick={() => setViewMode('text')} className={`px-3 py-1 text-xs font-medium rounded ${viewMode === 'text' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500'}`}>Text</button>
                 <button onClick={() => setViewMode('image')} className={`px-3 py-1 text-xs font-medium rounded ${viewMode === 'image' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500'}`}>Figs/Tables</button>
                 <button onClick={() => setViewMode('bookmarks')} className={`px-3 py-1 text-xs font-medium rounded ${viewMode === 'bookmarks' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500'}`}>★</button>
                 <button onClick={() => setViewMode('pdf')} className={`px-3 py-1 text-xs font-medium rounded ${viewMode === 'pdf' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500'}`}>PDF</button>
+                <button onClick={() => setPdfZoom((z) => Math.max(70, z - 10))} disabled={viewMode !== 'pdf'} className="px-2 py-1 text-xs font-medium rounded text-gray-500 hover:text-gray-800 disabled:opacity-40">-</button>
+                <span className="px-1 text-[11px] text-gray-500 min-w-[40px] text-center">{pdfZoom}%</span>
+                <button onClick={() => setPdfZoom((z) => Math.min(180, z + 10))} disabled={viewMode !== 'pdf'} className="px-2 py-1 text-xs font-medium rounded text-gray-500 hover:text-gray-800 disabled:opacity-40">+</button>
+                <button onClick={openPdfInNewWindow} disabled={!pdfUrl || viewMode !== 'pdf'} className="px-3 py-1 text-xs font-medium rounded text-gray-500 hover:text-gray-800 disabled:opacity-40">새창 PDF</button>
               </div>
             </div>
           </div>
@@ -642,11 +756,60 @@ const TwinView: React.FC<TwinViewProps & { onToggleBookmark: (id: string) => voi
             {viewMode === 'pdf' && (
               <div className="w-full h-full bg-gray-200">
                 {pdfUrl ? (
-                  <InternalPdfRenderer pdfUrl={pdfUrl} />
+                  <InternalPdfRenderer pdfUrl={pdfUrl} zoomPercent={pdfZoom} />
                 ) : <div className="p-8 text-center text-gray-400">PDF not available</div>}
               </div>
             )}
           </div>
+
+          {showSourceViewWindow && viewMode === 'text' && (
+            <div
+              className={`fixed z-40 bg-white border border-gray-200 shadow-xl flex flex-col ${
+                isSourceViewWindowFullscreen
+                  ? 'inset-4 rounded-lg'
+                  : 'left-4 top-24 w-[360px] h-[320px] min-w-[280px] min-h-[220px] max-w-[70vw] max-h-[70vh] rounded-lg resize overflow-auto'
+              }`}
+            >
+              <div className="px-3 py-2 border-b border-gray-200 flex items-center justify-between bg-gray-50">
+                <span className="text-xs font-bold text-gray-600">원문 보기 설정</span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsTwinScrollSyncOn((prev) => !prev)}
+                    className={`text-xs px-2 py-1 rounded border ${isTwinScrollSyncOn ? 'bg-primary-50 text-primary-700 border-primary-200' : 'bg-white text-gray-500 border-gray-300'}`}
+                    title="원문·번역 창 스크롤 동기화"
+                  >
+                    스크롤 동기화 {isTwinScrollSyncOn ? 'ON' : 'OFF'}
+                  </button>
+                  <button
+                    onClick={() => setIsSourceViewWindowFullscreen((prev) => !prev)}
+                    className="text-xs px-2 py-1 rounded border border-gray-300 bg-white text-gray-600 hover:bg-gray-100"
+                  >
+                    {isSourceViewWindowFullscreen ? '기본크기' : '전체화면'}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setIsSourceViewWindowFullscreen(false);
+                      setShowSourceViewWindow(false);
+                    }}
+                    className="text-xs px-2 py-1 rounded border border-gray-300 bg-white text-gray-600 hover:bg-gray-100"
+                  >
+                    닫기
+                  </button>
+                </div>
+              </div>
+              <div className="p-3 flex-1 min-h-0 flex flex-col">
+                <div className="flex gap-2 mb-2">
+                  <button onClick={() => handleLeftViewMode('english')} className={`text-xs px-2.5 py-1 rounded border ${leftViewMode === 'english' ? 'bg-primary-50 text-primary-700 border-primary-200' : 'bg-white text-gray-500 border-gray-300'}`}>영어만</button>
+                  <button onClick={() => handleLeftViewMode('korean')} className={`text-xs px-2.5 py-1 rounded border ${leftViewMode === 'korean' ? 'bg-primary-50 text-primary-700 border-primary-200' : 'bg-white text-gray-500 border-gray-300'}`}>한국어만</button>
+                  <button onClick={() => handleLeftViewMode('twin')} className={`text-xs px-2.5 py-1 rounded border ${leftViewMode === 'twin' ? 'bg-primary-50 text-primary-700 border-primary-200' : 'bg-white text-gray-500 border-gray-300'}`}>함께 보기</button>
+                </div>
+                <div className="p-3 bg-gray-50 rounded border border-gray-200 text-xs font-mono flex-1 min-h-0 overflow-y-auto whitespace-pre-wrap">
+                  {getLeftPreviewText()}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="w-1/2 flex flex-col bg-slate-50 relative">

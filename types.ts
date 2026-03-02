@@ -59,12 +59,20 @@ export interface VocabularyItem {
   definition: string;
   context: string;
   aiExplanation?: string; // Persisted explanation
+  /** 한국어 번역 (생성 시 함께 생성) */
+  termKo?: string;
+  definitionKo?: string;
+  contextKo?: string;
 }
 
 export interface ConclusionSummary {
   researchQuestions: string[];
   results: string[];
   implications: string[];
+  /** 한국어 번역 (생성 시 함께 생성) */
+  researchQuestionsKo?: string[];
+  resultsKo?: string[];
+  implicationsKo?: string[];
 }
 
 export interface ReferenceLink {

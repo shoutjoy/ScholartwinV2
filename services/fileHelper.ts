@@ -36,22 +36,126 @@ export const downloadText = (filename: string, text: string) => {
 };
 
 export const openInNewWindow = (content: string, title: string = 'Document') => {
-    const win = window.open('', '_blank', 'width=800,height=600');
+    const win = window.open('', '_blank', 'width=900,height=700');
     if (!win) return;
-    
+
+    const escapeHtml = (value: string) =>
+      value
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+
+    const safeTitle = escapeHtml(title);
+    const safeContent = escapeHtml(content);
+
     win.document.write(`
         <html>
             <head>
-                <title>${title}</title>
+                <title>${safeTitle}</title>
                 <style>
-                    body { font-family: sans-serif; padding: 40px; line-height: 1.6; color: #333; }
-                    pre { white-space: pre-wrap; background: #f4f4f5; padding: 20px; border-radius: 8px; }
+                    :root { --content-font-size: 14px; }
+                    body { font-family: sans-serif; margin: 0; line-height: 1.6; color: #333; background: #fff; }
+                    .toolbar {
+                        position: sticky;
+                        top: 0;
+                        display: flex;
+                        gap: 8px;
+                        align-items: center;
+                        padding: 10px 16px;
+                        background: #ffffff;
+                        border-bottom: 1px solid #e5e7eb;
+                        z-index: 10;
+                    }
+                    .toolbar button {
+                        padding: 8px 12px;
+                        border: 1px solid #d1d5db;
+                        border-radius: 8px;
+                        background: #f9fafb;
+                        cursor: pointer;
+                        font-size: 12px;
+                    }
+                    .toolbar button:hover { background: #f3f4f6; }
+                    .zoom-label { font-size: 12px; color: #4b5563; min-width: 56px; text-align: center; }
+                    .container { padding: 24px; }
+                    h1 { margin-top: 0; margin-bottom: 16px; }
+                    pre {
+                        white-space: pre-wrap;
+                        background: #f4f4f5;
+                        padding: 20px;
+                        border-radius: 8px;
+                        font-size: var(--content-font-size);
+                        overflow-x: auto;
+                    }
                 </style>
             </head>
             <body>
-                <h1>${title}</h1>
-                <pre>${content}</pre>
-                <button onclick="window.print()" style="margin-top:20px; padding:10px 20px; cursor:pointer;">Print / Save as PDF</button>
+                <div class="toolbar">
+                    <button id="zoomOutBtn">축소 -</button>
+                    <button id="zoomInBtn">확대 +</button>
+                    <button id="zoomResetBtn">초기화</button>
+                    <span id="zoomLabel" class="zoom-label">100%</span>
+                    <button id="copyBtn">복사</button>
+                    <button id="printBtn">Print / Save as PDF</button>
+                </div>
+                <div class="container">
+                    <h1>${safeTitle}</h1>
+                    <pre id="scriptContent">${safeContent}</pre>
+                </div>
+                <script>
+                    (function() {
+                        var pre = document.getElementById('scriptContent');
+                        var root = document.documentElement;
+                        var zoomLabel = document.getElementById('zoomLabel');
+                        var currentScale = 1;
+                        var minScale = 0.7;
+                        var maxScale = 2.0;
+                        var step = 0.1;
+
+                        function updateZoom() {
+                            var size = 14 * currentScale;
+                            root.style.setProperty('--content-font-size', size + 'px');
+                            if (zoomLabel) zoomLabel.textContent = Math.round(currentScale * 100) + '%';
+                        }
+
+                        function copyText() {
+                            var text = pre ? pre.textContent || '' : '';
+                            if (!text) return;
+                            if (navigator.clipboard && window.isSecureContext) {
+                                navigator.clipboard.writeText(text);
+                                return;
+                            }
+                            var temp = document.createElement('textarea');
+                            temp.value = text;
+                            document.body.appendChild(temp);
+                            temp.select();
+                            document.execCommand('copy');
+                            document.body.removeChild(temp);
+                        }
+
+                        document.getElementById('zoomInBtn')?.addEventListener('click', function() {
+                            currentScale = Math.min(maxScale, currentScale + step);
+                            updateZoom();
+                        });
+                        document.getElementById('zoomOutBtn')?.addEventListener('click', function() {
+                            currentScale = Math.max(minScale, currentScale - step);
+                            updateZoom();
+                        });
+                        document.getElementById('zoomResetBtn')?.addEventListener('click', function() {
+                            currentScale = 1;
+                            updateZoom();
+                        });
+                        document.getElementById('copyBtn')?.addEventListener('click', function() {
+                            copyText();
+                        });
+                        document.getElementById('printBtn')?.addEventListener('click', function() {
+                            window.print();
+                        });
+
+                        updateZoom();
+                    })();
+                </script>
             </body>
         </html>
     `);
@@ -62,21 +166,69 @@ export const openInNewWindow = (content: string, title: string = 'Document') => 
 
 export interface PageImage {
   pageIndex: number;
-  base64: string; // Full page image
+  base64: string;
   width: number;
   height: number;
+}
+
+export interface ExtractedPageText {
+  pageIndex: number;
+  text: string;
+  textWithPageMarker: string;
 }
 
 export const getPdfPageCount = async (file: File): Promise<number> => {
     try {
         const arrayBuffer = await file.arrayBuffer();
-        const loadingTask = pdfjs.getDocument(arrayBuffer);
+        const loadingTask = pdfjs.getDocument({
+          data: arrayBuffer,
+          cMapUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/cmaps/',
+          cMapPacked: true,
+          standardFontDataUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/standard_fonts/'
+        });
         const pdf = await loadingTask.promise;
         return pdf.numPages;
     } catch (e) {
         console.error("Failed to get page count", e);
         return 0;
     }
+};
+
+export const extractTextFromPdfPages = async (file: File, maxPages: number = 9999): Promise<ExtractedPageText[]> => {
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const loadingTask = pdfjs.getDocument({
+      data: arrayBuffer,
+      cMapUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/cmaps/',
+      cMapPacked: true,
+      standardFontDataUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/standard_fonts/'
+    });
+    const pdf = await loadingTask.promise;
+    const numPages = Math.min(pdf.numPages, maxPages);
+    const result: ExtractedPageText[] = [];
+    for (let i = 1; i <= numPages; i++) {
+      const page = await pdf.getPage(i);
+      const textContent = await page.getTextContent();
+      const lines: string[] = [];
+      let lastY: number | null = null;
+      const lineGap = 5;
+      for (const item of textContent.items as { str?: string; transform?: number[] }[]) {
+        const str = item.str ?? '';
+        if (!str) continue;
+        const y = item.transform?.[5] ?? 0;
+        if (lastY !== null && Math.abs(y - lastY) > lineGap) lines.push('\n');
+        lines.push(str);
+        lastY = y;
+      }
+      const text = lines.join('').replace(/\n+/g, '\n').trim();
+      const pageMarker = `\n--- Page ${i} ---\n`;
+      result.push({ pageIndex: i, text, textWithPageMarker: pageMarker + (text || '(no text)') + '\n' });
+    }
+    return result;
+  } catch (error) {
+    console.error("PDF text extraction error:", error);
+    throw new Error("Failed to extract text from PDF.");
+  }
 };
 
 export const renderPdfPagesToImages = async (file: File, maxPages: number = 5): Promise<PageImage[]> => {
