@@ -171,18 +171,12 @@ export interface PageImage {
   height: number;
 }
 
-<<<<<<< HEAD
-export interface ExtractedPageText {
-  pageIndex: number;
-  text: string;
-=======
 /** Result of extracting text from a single PDF page (for verification and AI). */
 export interface ExtractedPageText {
   pageIndex: number;
   /** Plain text for this page (no marker). */
   text: string;
   /** Same text with page marker for verification (e.g. "--- Page 1 ---\\n..."). */
->>>>>>> a87a1897157b84976bb7ff9835f934cc049d7648
   textWithPageMarker: string;
 }
 
@@ -203,18 +197,7 @@ export const getPdfPageCount = async (file: File): Promise<number> => {
     }
 };
 
-<<<<<<< HEAD
 export const extractTextFromPdfPages = async (file: File, maxPages: number = 9999): Promise<ExtractedPageText[]> => {
-=======
-/**
- * Extract text from PDF pages using the document's text layer (getTextContent).
- * Returns one entry per physical page with page markers for verification.
- */
-export const extractTextFromPdfPages = async (
-  file: File,
-  maxPages: number = 9999
-): Promise<ExtractedPageText[]> => {
->>>>>>> a87a1897157b84976bb7ff9835f934cc049d7648
   try {
     const arrayBuffer = await file.arrayBuffer();
     const loadingTask = pdfjs.getDocument({
@@ -226,17 +209,13 @@ export const extractTextFromPdfPages = async (
     const pdf = await loadingTask.promise;
     const numPages = Math.min(pdf.numPages, maxPages);
     const result: ExtractedPageText[] = [];
-<<<<<<< HEAD
-=======
 
->>>>>>> a87a1897157b84976bb7ff9835f934cc049d7648
     for (let i = 1; i <= numPages; i++) {
       const page = await pdf.getPage(i);
       const textContent = await page.getTextContent();
       const lines: string[] = [];
       let lastY: number | null = null;
       const lineGap = 5;
-<<<<<<< HEAD
       for (const item of textContent.items as { str?: string; transform?: number[] }[]) {
         const str = item.str ?? '';
         if (!str) continue;
@@ -253,36 +232,6 @@ export const extractTextFromPdfPages = async (
   } catch (error) {
     console.error("PDF text extraction error:", error);
     throw new Error("Failed to extract text from PDF.");
-=======
-
-      for (const item of textContent.items as { str?: string; transform?: number[] }[]) {
-        const str = item.str ?? '';
-        if (!str) continue;
-        const transform = item.transform;
-        const y = transform && transform[5] !== undefined ? transform[5] : 0;
-        if (lastY !== null && Math.abs(y - lastY) > lineGap) {
-          lines.push('\n');
-        }
-        lines.push(str);
-        lastY = y;
-      }
-
-      const text = lines.join('').replace(/\n+/g, '\n').trim();
-      const pageMarker = `\n--- Page ${i} ---\n`;
-      const textWithPageMarker = pageMarker + (text || '(no text on this page)') + '\n';
-
-      result.push({
-        pageIndex: i,
-        text,
-        textWithPageMarker
-      });
-    }
-
-    return result;
-  } catch (error) {
-    console.error("PDF text extraction error:", error);
-    throw new Error("Failed to extract text from PDF. The file may not have a text layer.");
->>>>>>> a87a1897157b84976bb7ff9835f934cc049d7648
   }
 };
 

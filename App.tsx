@@ -1,16 +1,10 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-<<<<<<< HEAD
 import { TranslationTone, PaperSegment, VocabularyItem, ConclusionSummary, PaperMetadata, User, ExtractedFigure, PaperAnalysisResult, SegmentType } from './types';
 import { fileToBase64, downloadText, printTranslatedPdf, renderPdfPagesToImages, getPdfPageCount, extractTextFromPdfPages, type ExtractedPageText } from './services/fileHelper';
 import { translatePagesWithLibreTranslate, type OpenSourceTranslationPage } from './services/libreTranslateService';
 import { analyzePaperMetadata, analyzePageContent, extractVocabulary, generateConclusion, findReferenceDetails, explainBlockContent, generatePresentationScript, structureOriginalTextIntoBlocks, translatePlainTextToKorean, translateLinesToKorean, getStoredSettings } from './services/geminiService';
 import { saveSessionRecord, listSessionRecords, getSessionRecord, deleteSessionRecord, type StoredSessionRecord } from './services/sessionStoreService';
-=======
-import { TranslationTone, PaperSegment, VocabularyItem, ConclusionSummary, PaperMetadata, User, ExtractedFigure, PaperAnalysisResult, ExtractionMethod } from './types';
-import { fileToBase64, downloadText, printTranslatedPdf, renderPdfPagesToImages, getPdfPageCount, extractTextFromPdfPages, type ExtractedPageText } from './services/fileHelper';
-import { getStoredSettings, analyzePaperMetadata, analyzePageContent, analyzePageContentFromText, extractVocabulary, generateConclusion, findReferenceDetails, explainBlockContent, generatePresentationScript } from './services/geminiService';
->>>>>>> a87a1897157b84976bb7ff9835f934cc049d7648
 import { authService } from './services/authService';
 import FileUpload from './components/FileUpload';
 import TwinView from './components/TwinView';
@@ -109,13 +103,6 @@ const App: React.FC = () => {
   const [sessionStatus, setSessionStatus] = useState('');
   const [sessionBusy, setSessionBusy] = useState(false);
 
-  /** Auto-extracted text from PDF (by page, with markers). Filled when file is uploaded. */
-  const [extractedPageTexts, setExtractedPageTexts] = useState<ExtractedPageText[] | null>(null);
-  const [extractingText, setExtractingText] = useState(false);
-  const [extractTextError, setExtractTextError] = useState<string | null>(null);
-  /** Tab for preview area when no segments yet: 'pdf' | 'text' */
-  const [previewTab, setPreviewTab] = useState<'pdf' | 'text'>('pdf');
-
   const abortRef = useRef(false);
   const originalScrollRef = useRef<HTMLDivElement | null>(null);
   const aiScrollRef = useRef<HTMLDivElement | null>(null);
@@ -168,38 +155,14 @@ const App: React.FC = () => {
     if (selectedFile) {
       const url = URL.createObjectURL(selectedFile);
       setPdfUrl(url);
-<<<<<<< HEAD
       getPdfPageCount(selectedFile).then(count => setTotalPages(count));
-=======
-      
-      // Fetch Total Page Count immediately
-      getPdfPageCount(selectedFile).then(count => {
-          setTotalPages(count);
-      });
-
-      // Start text extraction in background (for PDF / Text tabs)
->>>>>>> a87a1897157b84976bb7ff9835f934cc049d7648
       setExtractingText(true);
       setExtractTextError(null);
       setExtractedPageTexts(null);
       extractTextFromPdfPages(selectedFile, 9999)
-<<<<<<< HEAD
         .then(pages => { setExtractedPageTexts(pages); setExtractTextError(null); })
         .catch(err => { setExtractTextError(err?.message || 'Failed'); setExtractedPageTexts(null); })
         .finally(() => setExtractingText(false));
-=======
-        .then(pages => {
-          setExtractedPageTexts(pages);
-          setExtractTextError(null);
-        })
-        .catch(err => {
-          console.warn('Auto text extraction failed', err);
-          setExtractTextError(err?.message || 'Failed to extract text.');
-          setExtractedPageTexts(null);
-        })
-        .finally(() => setExtractingText(false));
-
->>>>>>> a87a1897157b84976bb7ff9835f934cc049d7648
       return () => URL.revokeObjectURL(url);
     } else {
       setPdfUrl(null);
@@ -207,7 +170,6 @@ const App: React.FC = () => {
       setExtractedPageTexts(null);
       setExtractingText(false);
       setExtractTextError(null);
-<<<<<<< HEAD
       setStructuredOriginalBlocks(null);
       setStructuringOriginal(false);
       setStructuringError(null);
@@ -219,9 +181,6 @@ const App: React.FC = () => {
       setHasStarted(false);
       setStartedView('sourceTranslate');
       sourceTranslateAutoTranslateDoneRef.current = false;
-=======
-      setPreviewTab('pdf');
->>>>>>> a87a1897157b84976bb7ff9835f934cc049d7648
     }
   }, [selectedFile]);
 
@@ -510,24 +469,16 @@ const App: React.FC = () => {
       abortRef.current = true;
   };
 
-  const executeTranslation = async (startPage: number, endPage: number, isAppend: boolean = false, forceExtractionMethod?: ExtractionMethod) => {
+  const executeTranslation = async (startPage: number, endPage: number, isAppend: boolean = false) => {
     if (!selectedFile) return;
-<<<<<<< HEAD
     if (!confirmAiExecution(`페이지 번역 (${startPage}-${endPage})`)) return;
     if (!ensureAiApiReady(`페이지 번역 (${startPage}-${endPage})`)) return;
-=======
-    const settings = getStoredSettings();
-    const extractionMethod = forceExtractionMethod ?? settings.extractionMethod;
-    const usePdfTextLayer = extractionMethod === 'pdfTextLayer';
-
->>>>>>> a87a1897157b84976bb7ff9835f934cc049d7648
     try {
       setIsProcessing(true);
       abortRef.current = false;
       setProgress(5); 
-      setProcessingStatus(usePdfTextLayer ? 'Extracting text from PDF...' : 'Preparing PDF...');
+      setProcessingStatus('Preparing PDF...');
       
-<<<<<<< HEAD
       // Keep current page in place while new translation runs in background.
       
       let pageImages;
@@ -540,88 +491,10 @@ const App: React.FC = () => {
         setIsProcessing(false);
         return;
       }
-=======
-      if (!isAppend) setSegments([]); 
->>>>>>> a87a1897157b84976bb7ff9835f934cc049d7648
 
-      if (usePdfTextLayer) {
-        // --- PDF text layer extraction path (default) ---
-        let extractedPages;
-        try {
-          extractedPages = await extractTextFromPdfPages(selectedFile, endPage);
-          const total = await getPdfPageCount(selectedFile);
-          setTotalPages(prev => Math.max(prev, total));
-        } catch (pdfError: any) {
-          console.error("PDF text extraction failed", pdfError);
-          alert(`Failed to extract text from PDF.\n${pdfError.message}\n\nTry "AI 이미지 분석" in Settings if the PDF has no text layer.`);
-          setIsProcessing(false);
-          return;
-        }
+      if (abortRef.current) { setIsProcessing(false); return; }
 
-        if (abortRef.current) { setIsProcessing(false); return; }
-
-        const pagesToProcess = extractedPages.filter(p => p.pageIndex >= startPage && p.pageIndex <= endPage);
-        if (pagesToProcess.length === 0) {
-          alert("No pages found for this range.");
-          setIsProcessing(false);
-          return;
-        }
-
-        if (!metadata && !isAppend) {
-          setProgress(10);
-          setProcessingStatus('Analyzing Metadata...');
-          try {
-            const firstPageImg = await renderPdfPagesToImages(selectedFile, 1);
-            if (firstPageImg.length > 0) {
-              const meta = await analyzePaperMetadata(firstPageImg[0].base64);
-              setMetadata(meta);
-            } else {
-              setMetadata({ title: selectedFile.name, authors: [], year: "", journal: "" });
-            }
-          } catch (metaError) {
-            setMetadata({ title: selectedFile.name, authors: [], year: "", journal: "" });
-          }
-        }
-
-        if (abortRef.current) { setIsProcessing(false); return; }
-
-        for (let i = 0; i < pagesToProcess.length; i++) {
-          if (abortRef.current) break;
-          const pageData = pagesToProcess[i];
-          const currentProgress = 10 + Math.round(((i + 1) / pagesToProcess.length) * 80);
-          setProgress(currentProgress);
-          setProcessingStatus(`Processing Page ${pageData.pageIndex} of ${endPage}...`);
-
-          const pageSegments = await analyzePageContentFromText(pageData.textWithPageMarker, pageData.pageIndex, tone);
-          if (abortRef.current) break;
-
-          setSegments(prev => {
-            const filtered = prev.filter(s => s.pageIndex !== pageData.pageIndex);
-            return [...filtered, ...pageSegments];
-          });
-          setLastProcessedPage(prev => Math.max(prev, pageData.pageIndex));
-        }
-
-        const lastPage = pagesToProcess.length > 0 ? pagesToProcess[pagesToProcess.length - 1].pageIndex : startPage;
-        const newRangeStr = `${startPage}-${lastPage}`;
-        setCurrentActiveRange(prev => isAppend ? (prev ? `${prev}, ${newRangeStr}` : newRangeStr) : newRangeStr);
-        setProgress(100);
-      } else {
-        // --- AI vision extraction path (optional) ---
-        let pageImages;
-        try {
-          pageImages = await renderPdfPagesToImages(selectedFile, endPage);
-          setTotalPages(prev => Math.max(prev, pageImages.length));
-        } catch (pdfError: any) {
-          console.error("PDF Parsing failed", pdfError);
-          alert(`Failed to read the PDF file. \nError: ${pdfError.message}`);
-          setIsProcessing(false);
-          return;
-        }
-
-        if (abortRef.current) { setIsProcessing(false); return; }
-
-        const pagesToProcess = pageImages.filter(p => p.pageIndex >= startPage && p.pageIndex <= endPage);
+      const pagesToProcess = pageImages.filter(p => p.pageIndex >= startPage && p.pageIndex <= endPage);
         if (pagesToProcess.length === 0) {
           alert("No pages found for this range.");
           setIsProcessing(false);
@@ -641,12 +514,8 @@ const App: React.FC = () => {
 
         if (abortRef.current) { setIsProcessing(false); return; }
 
-<<<<<<< HEAD
       let processedUntil = isAppend ? lastProcessedPage : (startPage - 1);
       for (let i = 0; i < pagesToProcess.length; i++) {
-=======
-        for (let i = 0; i < pagesToProcess.length; i++) {
->>>>>>> a87a1897157b84976bb7ff9835f934cc049d7648
           if (abortRef.current) break;
           const pageImg = pagesToProcess[i];
           const currentProgress = 10 + Math.round(((i + 1) / pagesToProcess.length) * 80);
@@ -711,7 +580,6 @@ const App: React.FC = () => {
           }
 
           setSegments(prev => {
-<<<<<<< HEAD
               const filtered = prev.filter(s => s.pageIndex !== pageImg.pageIndex);
               return [...filtered, ...safePageSegments];
           });
@@ -723,19 +591,6 @@ const App: React.FC = () => {
       const newRangeStr = `${startPage}-${effectiveEnd}`; // Update range to what was actually processed
       setCurrentActiveRange(prev => isAppend ? (prev ? `${prev}, ${newRangeStr}` : newRangeStr) : newRangeStr);
       setProgress(100);
-=======
-            const filtered = prev.filter(s => s.pageIndex !== pageImg.pageIndex);
-            return [...filtered, ...pageSegments];
-          });
-          setLastProcessedPage(prev => Math.max(prev, pageImg.pageIndex));
-        }
-
-        const lastPage = pagesToProcess.length > 0 ? pagesToProcess[pagesToProcess.length - 1].pageIndex : startPage;
-        const newRangeStr = `${startPage}-${lastPage}`;
-        setCurrentActiveRange(prev => isAppend ? (prev ? `${prev}, ${newRangeStr}` : newRangeStr) : newRangeStr);
-        setProgress(100);
-      }
->>>>>>> a87a1897157b84976bb7ff9835f934cc049d7648
 
       if (processedUntil >= startPage) {
         setTimeout(() => {
@@ -765,7 +620,7 @@ const App: React.FC = () => {
     await executeTranslation(pageIndex, pageIndex, true);
   };
 
-  const handleTranslate = async (isFull: boolean, forceExtractionMethod?: ExtractionMethod) => {
+  const handleTranslate = async (isFull: boolean) => {
     if (!selectedFile) return;
 
     // Enter the main reading/translation screen first, then run translation in background.
@@ -775,24 +630,10 @@ const App: React.FC = () => {
     }
     
     if (isFull) {
-        await executeTranslation(1, totalPages || 9999, false, forceExtractionMethod);
+        await executeTranslation(1, totalPages || 9999, false);
     } else {
-<<<<<<< HEAD
         // [1-2p시작] 버튼: 무조건 1페이지만 (페이지 범위 무시)
         await executeTranslation(1, 1, false);
-=======
-        let start = 1;
-        let end = 2; // Default 2 pages
-        
-        if (pageRange.trim()) {
-             const parts = pageRange.split('-').map(p => parseInt(p.trim()));
-             if (!isNaN(parts[0])) start = parts[0];
-             if (parts.length > 1 && !isNaN(parts[1])) end = parts[1];
-             else end = start;
-        }
-
-        await executeTranslation(start, end, false, forceExtractionMethod);
->>>>>>> a87a1897157b84976bb7ff9835f934cc049d7648
     }
   };
 
@@ -1549,7 +1390,6 @@ const App: React.FC = () => {
             {!hasStarted ? (
               <div className="flex w-full h-full">
                   <div className="w-1/2 bg-slate-100 border-r border-gray-200 hidden md:flex flex-col relative group">
-<<<<<<< HEAD
                       <div className="flex-shrink-0 flex border-b border-gray-200 bg-white">
                         <button onClick={() => setPreviewTab('pdf')} className={`px-4 py-3 text-sm font-medium ${previewTab === 'pdf' ? 'bg-slate-100 text-gray-900 border-b-2 border-primary-500 -mb-px' : 'text-gray-500 hover:text-gray-700'}`}>PDF</button>
                         <button onClick={() => setPreviewTab('text')} className={`px-4 py-3 text-sm font-medium flex items-center gap-1 ${previewTab === 'text' ? 'bg-slate-100 text-gray-900 border-b-2 border-primary-500 -mb-px' : 'text-gray-500 hover:text-gray-700'}`}>원본(text){extractingText && <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />}</button>
@@ -1665,90 +1505,6 @@ const App: React.FC = () => {
                             )}
                           </div>
                         )}
-=======
-                      {/* Tabs: PDF | Text (원문 추출) */}
-                      <div className="flex-shrink-0 flex border-b border-gray-200 bg-white">
-                        <button
-                          onClick={() => setPreviewTab('pdf')}
-                          className={`px-4 py-3 text-sm font-medium transition-colors ${previewTab === 'pdf' ? 'bg-slate-100 text-gray-900 border-b-2 border-primary-500 -mb-px' : 'text-gray-500 hover:text-gray-700'}`}
-                        >
-                          PDF
-                        </button>
-                        <button
-                          onClick={() => setPreviewTab('text')}
-                          className={`px-4 py-3 text-sm font-medium transition-colors flex items-center gap-1 ${previewTab === 'text' ? 'bg-slate-100 text-gray-900 border-b-2 border-primary-500 -mb-px' : 'text-gray-500 hover:text-gray-700'}`}
-                        >
-                          Text (원문 추출)
-                          {extractingText && <span className="inline-block w-2 h-2 rounded-full bg-amber-500 animate-pulse" />}
-                        </button>
-                      </div>
-                      {/* Tab content */}
-                      <div className="flex-1 min-h-0 relative">
-                      {previewTab === 'pdf' ? (
-                        <>
-                      {showPdfWindow ? (
-                          <div className="flex flex-col items-center justify-center h-full p-10 text-center bg-gray-200/50">
-                             <div className="bg-white p-6 rounded-xl shadow-lg border border-gray-200 flex flex-col items-center animate-in fade-in zoom-in-95">
-                                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-12 h-12 text-indigo-500 mb-3">
-                                   <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
-                                 </svg>
-                                 <h3 className="font-bold text-gray-800 text-lg">PDF is open in a separate window</h3>
-                                 <p className="text-gray-500 text-sm mt-1 mb-4">The PDF preview is synced with this dashboard.</p>
-                                 <button 
-                                   onClick={() => setShowPdfWindow(false)}
-                                   className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-medium rounded-lg transition-colors border border-gray-300"
-                                 >
-                                   Bring PDF Back Here
-                                 </button>
-                             </div>
-                          </div>
-                      ) : (
-                          <>
-                             {pdfUrl && <object data={`${pdfUrl}#toolbar=0&navpanes=0`} type="application/pdf" className="w-full h-full"><div className="flex flex-col items-center justify-center h-full text-gray-400 p-10 text-center"><p>Preview not available in this browser.</p></div></object>}
-                             <div className="absolute top-4 left-4 bg-black/50 backdrop-blur text-white text-xs px-2 py-1 rounded pointer-events-none">PDF Preview</div>
-                             
-                             <div className="absolute inset-0 bg-black/5 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center pointer-events-none">
-                                <button 
-                                   onClick={() => setShowPdfWindow(true)}
-                                   className="bg-white text-gray-800 px-5 py-3 rounded-full shadow-lg font-bold flex items-center gap-2 pointer-events-auto hover:scale-105 transition-transform"
-                                >
-                                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5 text-indigo-600">
-                                     <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
-                                   </svg>
-                                   Open Synced PDF Window
-                                </button>
-                             </div>
-                          </>
-                      )}
-                        </>
-                      ) : (
-                        <div className="absolute inset-0 flex flex-col bg-white overflow-hidden">
-                          {extractingText ? (
-                            <div className="flex-1 flex flex-col items-center justify-center p-8 text-gray-500">
-                              <div className="w-8 h-8 border-2 border-primary-500 border-t-transparent rounded-full animate-spin mb-3" />
-                              <p className="text-sm font-medium">원문 추출 중...</p>
-                              <p className="text-xs mt-1">PDF 텍스트 레이어에서 페이지별로 추출합니다.</p>
-                            </div>
-                          ) : extractTextError ? (
-                            <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
-                              <p className="text-sm text-amber-700 font-medium">추출할 수 없습니다</p>
-                              <p className="text-xs text-gray-500 mt-1">{extractTextError}</p>
-                              <p className="text-xs text-gray-400 mt-2">설정에서 &quot;AI 이미지 분석&quot;을 사용하거나 원문 추출 버튼을 이용하세요.</p>
-                            </div>
-                          ) : extractedPageTexts && extractedPageTexts.length > 0 ? (
-                            <div className="flex-1 overflow-y-auto p-4">
-                              <pre className="text-xs text-gray-800 whitespace-pre-wrap font-sans leading-relaxed">
-                                {extractedPageTexts.map(p => p.textWithPageMarker).join('')}
-                              </pre>
-                            </div>
-                          ) : (
-                            <div className="flex-1 flex items-center justify-center p-8 text-gray-400 text-sm">
-                              텍스트가 없거나 추출 결과가 비어 있습니다.
-                            </div>
-                          )}
-                        </div>
-                      )}
->>>>>>> a87a1897157b84976bb7ff9835f934cc049d7648
                       </div>
                   </div>
                   <div className="w-full md:w-1/2 bg-white flex flex-col overflow-y-auto">
@@ -1775,32 +1531,17 @@ const App: React.FC = () => {
                                 <div>
                                   <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Extraction Range</label>
                                   <div className="space-y-3">
-<<<<<<< HEAD
                                       <button onClick={() => { setShowPdfWindow(true); setHasStarted(true); }} disabled={isProcessing} className="w-full py-4 bg-gray-900 hover:bg-black text-white font-bold rounded-xl shadow-lg hover:shadow-xl transition-all flex items-center justify-center gap-2 group disabled:opacity-50 disabled:cursor-not-allowed">
                                          {isProcessing ? <>Processing...</> : <>입장하기</>}
-=======
-                                      <button onClick={() => handleTranslate(true)} disabled={isProcessing} className="w-full py-4 bg-gray-900 hover:bg-black text-white font-bold rounded-xl shadow-lg hover:shadow-xl transition-all flex items-center justify-center gap-2 group disabled:opacity-50 disabled:cursor-not-allowed">
-                                         {isProcessing ? <>Processing...</> : <><span>원문 추출 (전체)</span><svg className="w-4 h-4 group-hover:translate-x-1 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/></svg></>}
-                                       </button>
-                                       <button onClick={() => handleTranslate(true, 'aiVision')} disabled={isProcessing} className="w-full py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold rounded-xl border border-gray-300 transition-all flex items-center justify-center gap-2 group disabled:opacity-50 disabled:cursor-not-allowed">
-                                         {isProcessing ? <>Processing...</> : <><span>인공지능 추출 (전체)</span></>}
->>>>>>> a87a1897157b84976bb7ff9835f934cc049d7648
                                        </button>
                                        <div className="relative">
                                           <div className="absolute inset-0 flex items-center" aria-hidden="true"><div className="w-full border-t border-gray-200"></div></div>
                                           <div className="relative flex justify-center"><span className="px-2 bg-white text-xs text-gray-400">OR SELECT PAGES</span></div>
                                         </div>
-<<<<<<< HEAD
                                       <div className="flex gap-2 flex-wrap items-center">
                                           <input type="text" placeholder="e.g. 1-2 (Default: 1-2)" value={pageRange} onChange={(e) => setPageRange(e.target.value)} className="flex-1 min-w-0 bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-primary-500 focus:border-primary-500 p-2.5 text-center outline-none" />
                                       <button onClick={() => { handleTranslate(false); }} disabled={isProcessing} className="px-4 py-2.5 bg-white border border-gray-300 text-gray-700 font-bold rounded-lg hover:bg-gray-50 transition-colors shadow-sm disabled:opacity-50 text-sm">[차례로]</button>
                                       <button onClick={() => { handleTranslate(true); }} disabled={isProcessing} className="px-4 py-2.5 bg-gray-100 border border-gray-300 text-gray-600 font-medium rounded-lg hover:bg-gray-200 transition-colors shadow-sm disabled:opacity-50 text-sm">[Full extract]</button>
-=======
-                                      <div className="flex gap-2">
-                                          <input type="text" placeholder="e.g. 1-2 (Default: 1-2)" value={pageRange} onChange={(e) => setPageRange(e.target.value)} className="flex-1 bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-primary-500 focus:border-primary-500 p-2.5 text-center outline-none" />
-                                          <button onClick={() => handleTranslate(false)} disabled={isProcessing} className="px-6 py-2.5 bg-white border border-gray-300 text-gray-700 font-bold rounded-lg hover:bg-gray-50 transition-colors shadow-sm disabled:opacity-50">원문 추출</button>
-                                          <button onClick={() => handleTranslate(false, 'aiVision')} disabled={isProcessing} className="px-4 py-2.5 bg-gray-100 border border-gray-300 text-gray-600 text-sm font-medium rounded-lg hover:bg-gray-200 transition-colors shadow-sm disabled:opacity-50">인공지능</button>
->>>>>>> a87a1897157b84976bb7ff9835f934cc049d7648
                                       </div>
                                   </div>
                                 </div>
